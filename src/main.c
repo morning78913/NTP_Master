@@ -14,25 +14,53 @@
 #include <bluetooth/services/bas.h>
 #include <bluetooth/services/hrs.h>
 
+#include <logging/log.h>
+
+#include <device.h>
+#include <devicetree.h>
+#include <drivers/gpio.h>
+
+/* The devicetree node identifier for the "led0" alias. */
+#define LED0_NODE DT_ALIAS(led0)
+#define LED0	DT_GPIO_LABEL(LED0_NODE, gpios)
+#define PIN	DT_GPIO_PIN(LED0_NODE, gpios)
+#define FLAGS	DT_GPIO_FLAGS(LED0_NODE, gpios)
+
+// log_strdup is required when logging transient strings
+#define sd(x) log_strdup((x))
+
+// custom service definition for Nordic Uart Service
+#define NUS_SVC_UUID	0x9E, 0xCA, 0xDC, 0x24, 0x0E, 0xE5, 0xA9, 0xE0, \
+						0x93, 0xF3, 0xA3, 0xB5, 0x00, 0x01, 0x40, 0x6E
+
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
 	BT_DATA_BYTES(	BT_DATA_UUID16_ALL,
 					BT_UUID_16_ENCODE(BT_UUID_HRS_VAL),
 					BT_UUID_16_ENCODE(BT_UUID_BAS_VAL),
-					BT_UUID_16_ENCODE(BT_UUID_DIS_VAL)	)
+					BT_UUID_16_ENCODE(BT_UUID_DIS_VAL)),
+	BT_DATA_BYTES(BT_DATA_UUID128_ALL, NUS_SVC_UUID )	
 };
+
+bool led_is_on = false;
+const struct device *dev;
 
 static void connected(struct bt_conn *conn, uint8_t err)
 {
+	char addr[BT_ADDR_LE_STR_LEN];
+	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+	
 	if (err) {
-		printk("Connection failed (err 0x%02x)\n", err);
+		printk("Failed to connect to %s (%u)\n", sd(addr), err);
 	} else {
-		printk("Connected\n");
+		gpio_pin_set(dev, PIN, led_is_on = true);
+		printk("Connected %s\n", sd(addr));
 	}
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)
 {
+	gpio_pin_set(dev, PIN, led_is_on = false);
 	printk("Disconnected (reason 0x%02x)\n", reason);
 }
 
@@ -107,8 +135,20 @@ void main(void)
 		return;
 	}
 
-	bt_ready();
+	dev = device_get_binding(LED0);
+	if (dev == NULL) {
+		return;
+	}
 
+	err = gpio_pin_configure(dev, PIN, GPIO_OUTPUT_ACTIVE | FLAGS);
+	if (err < 0) {
+		return;
+	}
+
+	gpio_pin_set(dev, PIN, led_is_on = false);
+
+	bt_ready();
+	
 	bt_conn_cb_register(&conn_callbacks);
 	bt_conn_auth_cb_register(&auth_cb_display);
 
